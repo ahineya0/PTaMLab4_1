@@ -80,7 +80,38 @@ namespace NetworkApp
             }
 
             _suppressDriveChange = true;
+
+            // Пересобираем список. Сначала все части текущего пути, потом остальные диски.
+            var pathParts = new System.Collections.Generic.List<string>();
+
+            // Разбиваем путь на части.
+            string temp = path;
+            while (!string.IsNullOrEmpty(temp))
+            {
+                pathParts.Add(temp);
+                string parent = Path.GetDirectoryName(temp);
+                if (parent == temp) break;
+                temp = parent;
+            }
+
+            // Добавляем диски, которых ещё нет в списке.
+            var existingDrives = new System.Collections.Generic.List<string>();
+            foreach (string item in cmbDrive.Items)
+                existingDrives.Add(item);
+
+            foreach (string drive in existingDrives)
+            {
+                if (!pathParts.Contains(drive)) pathParts.Add(drive);
+            }
+
+            cmbDrive.Items.Clear();
+            foreach (string part in pathParts)
+            {
+                cmbDrive.Items.Add(part);
+            }
+
             cmbDrive.Text = path;
+
             _suppressDriveChange = false;
         }
 
@@ -98,36 +129,34 @@ namespace NetworkApp
 
             string[] drives = drivesLine.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
             foreach (string drive in drives)
+            { 
                 cmbDrive.Items.Add(drive.Trim());
+            }
 
-            if (cmbDrive.Items.Count > 0)
-                cmbDrive.SelectedIndex = 0;
+
+            if (cmbDrive.Items.Count > 0) cmbDrive.Text = cmbDrive.Items[0].ToString(); // Просто текст, без выбора индекса.
 
             _suppressDriveChange = false;
 
-            // Теперь вручную запускаем навигацию в первый диск.
-            if (cmbDrive.SelectedItem != null)
-                RequestDirectoryListing(cmbDrive.SelectedItem.ToString());
+            if (cmbDrive.Items.Count > 0) RequestDirectoryListing(cmbDrive.Items[0].ToString());
         }
 
         private void cmbDrive_SelectedIndexChanged(object sender, EventArgs e)
         {
-            if (_suppressDriveChange || !_clientConnected || cmbDrive.SelectedItem == null)
-                return;
+            if (_suppressDriveChange || !_clientConnected || cmbDrive.SelectedItem == null) return;
 
-            // Пользователь выбрал диск из списка — идём в его корень.
-            RequestDirectoryListing(cmbDrive.SelectedItem.ToString());
+            string selected = cmbDrive.SelectedItem.ToString();
+            if (selected != _currentServerPath) RequestDirectoryListing(selected);
         }
 
         private void RequestDirectoryListing(string path)
         {
-            if (!_clientConnected || _clientStream == null)
-                return;
+            if (!_clientConnected || _clientStream == null) return;
 
             try
             {
                 _currentServerPath = path;
-                UpdateAddressBar(path); // <- обновляем адресную строку
+                UpdateAddressBar(path); // Обновляем адресную строку.
                 SendMessage(_clientStream, path);
                 _lastRequestWasFile = false;
             }
@@ -147,9 +176,7 @@ namespace NetworkApp
             }
 
             lstFiles.Items.Clear();
-            string[] lines = listing.Split(
-                new string[] { "\r\n", "\n" },
-                StringSplitOptions.RemoveEmptyEntries);
+            string[] lines = listing.Split(new string[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries);
             foreach (string line in lines)
             {
                 lstFiles.Items.Add(line);
@@ -164,14 +191,12 @@ namespace NetworkApp
 
         private void lstFiles_DoubleClick(object sender, EventArgs e)
         {
-            if (!_clientConnected || lstFiles.SelectedItem == null)
-                return;
+            if (!_clientConnected || lstFiles.SelectedItem == null) return;
 
             string selected = lstFiles.SelectedItem.ToString();
 
             // Переходим только в директории (нет расширения).
-            if (!IsDirectory(selected))
-                return;
+            if (!IsDirectory(selected)) return;
 
             string newPath = Path.Combine(_currentServerPath, selected);
             RequestDirectoryListing(newPath);
@@ -179,10 +204,8 @@ namespace NetworkApp
 
         private void btnToggleServer_Click(object sender, EventArgs e)
         {
-            if (!_serverRunning)
-                StartServer();
-            else
-                StopServer();
+            if (!_serverRunning) StartServer();
+            else StopServer();
         }
 
         private void StartServer()
