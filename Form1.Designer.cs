@@ -22,7 +22,6 @@ namespace NetworkApp
         private Button btnDisconnect;
         private Button btnExit;
         private Button btnSendToServer;
-        private Button btnSendToClient;
         private Panel panelBottom;
         private Panel panelMain;
         private Panel panelLeft;
@@ -55,7 +54,6 @@ namespace NetworkApp
             this.btnDisconnect   = new Button();
             this.btnExit         = new Button();
             this.btnSendToServer = new Button();
-            this.btnSendToClient = new Button();
             this.panelBottom     = new Panel();
             this.panelMain       = new Panel();
             this.panelLeft       = new Panel();
@@ -194,13 +192,6 @@ namespace NetworkApp
             this.btnSendToServer.Enabled  = false;
             this.btnSendToServer.Click   += new EventHandler(btnSendToServer_Click);
 
-            // btnSendToClient
-            this.btnSendToClient.Text     = "Передать клиенту";
-            this.btnSendToClient.Font     = new Font("Segoe UI", 9f);
-            this.btnSendToClient.Size     = new Size(140, 26);
-            this.btnSendToClient.Location = new Point(470, 46);
-            this.btnSendToClient.Click   += new EventHandler(btnSendToClient_Click);
-
             this.panelBottom.Controls.Add(this.lblIpAddress);
             this.panelBottom.Controls.Add(this.txtIpAddress);
             this.panelBottom.Controls.Add(this.btnToggleServer);
@@ -208,7 +199,6 @@ namespace NetworkApp
             this.panelBottom.Controls.Add(this.btnDisconnect);
             this.panelBottom.Controls.Add(this.btnExit);
             this.panelBottom.Controls.Add(this.btnSendToServer);
-            this.panelBottom.Controls.Add(this.btnSendToClient);
 
             // ─── Добавление панелей на форму ───
             this.Controls.Add(this.panelMain);

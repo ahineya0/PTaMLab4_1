@@ -17,8 +17,8 @@ namespace NetworkApp
         private bool _serverRunning = false;
         private bool _clientConnected = false;
         private bool _lastRequestWasFile = false;
+        private bool _suppressDriveChange = false;
 
-        // Текущий путь на сервере, по которому навигация клиента.
         private string _currentServerPath = "";
 
         private const int PORT = 5000;
@@ -26,10 +26,8 @@ namespace NetworkApp
         public Form1()
         {
             InitializeComponent();
-            // Список файлов пуст до подключения к серверу.
         }
 
-        // Вспомогательные методы для потокобезопасного обновления UI.
         private void AppendClientLog(string text)
         {
             if (rtbClient.InvokeRequired)
@@ -72,7 +70,20 @@ namespace NetworkApp
             btnSendToServer.Enabled = connected;
         }
 
-        // Заполнить cmbDrive списком дисков, пришедших от сервера.
+        // Обновить адресную строку текущим путём (без триггера события).
+        private void UpdateAddressBar(string path)
+        {
+            if (cmbDrive.InvokeRequired)
+            {
+                cmbDrive.Invoke(new Action<string>(UpdateAddressBar), path);
+                return;
+            }
+
+            _suppressDriveChange = true;
+            cmbDrive.Text = path;
+            _suppressDriveChange = false;
+        }
+
         private void PopulateDrivesFromServer(string drivesLine)
         {
             if (cmbDrive.InvokeRequired)
@@ -81,24 +92,52 @@ namespace NetworkApp
                 return;
             }
 
+            _suppressDriveChange = true;
             cmbDrive.Items.Clear();
             lstFiles.Items.Clear();
 
             string[] drives = drivesLine.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
             foreach (string drive in drives)
-            {
                 cmbDrive.Items.Add(drive.Trim());
-            }
 
             if (cmbDrive.Items.Count > 0)
-            {
-                // Выбор диска вызовет cmbDrive_SelectedIndexChanged,
-                // который запросит содержимое у сервера.
                 cmbDrive.SelectedIndex = 0;
-            }
+
+            _suppressDriveChange = false;
+
+            // Теперь вручную запускаем навигацию в первый диск.
+            if (cmbDrive.SelectedItem != null)
+                RequestDirectoryListing(cmbDrive.SelectedItem.ToString());
         }
 
-        // Заполнить lstFiles именами, пришедшими от сервера.
+        private void cmbDrive_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if (_suppressDriveChange || !_clientConnected || cmbDrive.SelectedItem == null)
+                return;
+
+            // Пользователь выбрал диск из списка — идём в его корень.
+            RequestDirectoryListing(cmbDrive.SelectedItem.ToString());
+        }
+
+        private void RequestDirectoryListing(string path)
+        {
+            if (!_clientConnected || _clientStream == null)
+                return;
+
+            try
+            {
+                _currentServerPath = path;
+                UpdateAddressBar(path); // <- обновляем адресную строку
+                SendMessage(_clientStream, path);
+                _lastRequestWasFile = false;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Ошибка запроса каталога: " + ex.Message);
+                DisconnectClient();
+            }
+        }
+               
         private void PopulateListFromServer(string listing)
         {
             if (lstFiles.InvokeRequired)
@@ -117,72 +156,33 @@ namespace NetworkApp
             }
         }
 
-        // Навигация (левая панель).
-        private void cmbDrive_SelectedIndexChanged(object sender, EventArgs e)
+        // Определяет, является ли имя директорией: у файлов есть расширение, у папок — нет.
+        private static bool IsDirectory(string name)
         {
-            if (!_clientConnected || cmbDrive.SelectedItem == null)
-            {
-                return;
-            }
-
-            string path = cmbDrive.SelectedItem.ToString();
-            RequestDirectoryListing(path);
+            return string.IsNullOrEmpty(Path.GetExtension(name));
         }
 
         private void lstFiles_DoubleClick(object sender, EventArgs e)
         {
             if (!_clientConnected || lstFiles.SelectedItem == null)
-            {
                 return;
-            }
 
             string selected = lstFiles.SelectedItem.ToString();
 
-            // Каталоги помечены префиксом [DIR].
-            if (!selected.StartsWith("[DIR] "))
-            {
+            // Переходим только в директории (нет расширения).
+            if (!IsDirectory(selected))
                 return;
-            }
 
-            string dirName = selected.Substring(6); // убираем "[DIR] "
-            string newPath = Path.Combine(_currentServerPath, dirName);
+            string newPath = Path.Combine(_currentServerPath, selected);
             RequestDirectoryListing(newPath);
         }
 
-        // Отправить серверу запрос на листинг каталога.
-        private void RequestDirectoryListing(string path)
-        {
-            if (!_clientConnected || _clientStream == null)
-            {
-                return;
-            }
-
-            try
-            {
-                _currentServerPath = path;
-                cmbDrive.Text = path;
-                SendMessage(_clientStream, path);
-                _lastRequestWasFile = false;
-                // Ответ придёт в фоновом потоке ReceiveLoop.
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show("Ошибка запроса каталога: " + ex.Message);
-                DisconnectClient();
-            }
-        }
-
-        // Сервер.
         private void btnToggleServer_Click(object sender, EventArgs e)
         {
             if (!_serverRunning)
-            {
                 StartServer();
-            }
             else
-            {
                 StopServer();
-            }
         }
 
         private void StartServer()
@@ -210,11 +210,7 @@ namespace NetworkApp
         private void StopServer()
         {
             _serverRunning = false;
-            try
-            {
-                _server?.Stop();
-            }
-            catch { }
+            try { _server?.Stop(); } catch { }
 
             SetServerButtons(false);
             AppendServerLog("Сервер остановлен.");
@@ -233,7 +229,6 @@ namespace NetworkApp
                 }
                 catch
                 {
-                    // Сервер остановлен, выходим из цикла.
                     break;
                 }
             }
@@ -248,7 +243,6 @@ namespace NetworkApp
 
             NetworkStream stream = clientConnection.GetStream();
 
-            // Отправляем клиенту список логических дисков.
             string drives = string.Join(",", Directory.GetLogicalDrives());
             SendMessage(stream, drives);
 
@@ -260,10 +254,7 @@ namespace NetworkApp
                 while (clientConnection.Connected)
                 {
                     string request = ReceiveMessage(stream);
-                    if (request == null)
-                    {
-                        break;
-                    }
+                    if (request == null) break;
 
                     timestamp = DateTime.Now.ToString("dd.MM.yyyy HH:mm:ss");
                     AppendServerLog($"Сервер получил {timestamp}\r\n{request}");
@@ -283,25 +274,18 @@ namespace NetworkApp
         private string ProcessRequest(string request)
         {
             if (string.IsNullOrWhiteSpace(request))
-            {
                 return "Пустой запрос.";
-            }
 
             if (Directory.Exists(request))
             {
                 StringBuilder sb = new StringBuilder();
                 try
                 {
-                    string[] dirs = Directory.GetDirectories(request);
-                    string[] files = Directory.GetFiles(request);
-                    foreach (string d in dirs)
-                    {
-                        sb.AppendLine("[DIR] " + Path.GetFileName(d));
-                    }
-                    foreach (string f in files)
-                    {
+                    foreach (string d in Directory.GetDirectories(request))
+                        sb.AppendLine(Path.GetFileName(d));
+
+                    foreach (string f in Directory.GetFiles(request))
                         sb.AppendLine(Path.GetFileName(f));
-                    }
                 }
                 catch (Exception ex)
                 {
@@ -326,7 +310,6 @@ namespace NetworkApp
             }
         }
 
-        // Клиент.
         private void btnConnect_Click(object sender, EventArgs e)
         {
             string ip = txtIpAddress.Text.Trim();
@@ -344,7 +327,6 @@ namespace NetworkApp
                 _clientConnected = true;
                 SetClientButtons(true);
 
-                // Запускаем фоновый поток приёма всех сообщений от сервера.
                 Thread receiveThread = new Thread(ReceiveLoop);
                 receiveThread.IsBackground = true;
                 receiveThread.Start();
@@ -358,8 +340,6 @@ namespace NetworkApp
             }
         }
 
-        // Фоновый поток: читает все входящие сообщения от сервера.
-        // Первое сообщение список дисков, последующие ответы на запросы.
         private void ReceiveLoop()
         {
             bool firstMessage = true;
@@ -369,30 +349,22 @@ namespace NetworkApp
                 while (_clientConnected)
                 {
                     string message = ReceiveMessage(_clientStream);
-                    if (message == null)
-                    {
-                        break;
-                    }
+                    if (message == null) break;
 
                     string timestamp = DateTime.Now.ToString("dd.MM.yyyy HH:mm:ss");
 
                     if (firstMessage)
                     {
-                        // Первое сообщение список дисков от сервера.
                         firstMessage = false;
                         AppendClientLog($"Клиент получил {timestamp}\r\n{message}");
                         PopulateDrivesFromServer(message);
                     }
                     else
                     {
-                        // Ответ на запрос каталога или файла.
                         AppendClientLog($"Клиент получил {timestamp}\r\n{message}");
 
-                        // Листинг каталога, обновляем lstFiles. Содержимое бинарного/текстового файла в список не кладём.
                         if (!_lastRequestWasFile)
-                        {
                             PopulateListFromServer(message);
-                        }
                     }
                 }
             }
@@ -400,9 +372,7 @@ namespace NetworkApp
             finally
             {
                 if (_clientConnected)
-                {
                     DisconnectClient();
-                }
             }
         }
 
@@ -421,15 +391,10 @@ namespace NetworkApp
             }
             catch { }
 
-            // Очищаем дерево файлов при отключении.
             if (cmbDrive.InvokeRequired)
-            {
                 cmbDrive.Invoke(new Action(ClearFileTree));
-            }
             else
-            {
                 ClearFileTree();
-            }
 
             SetClientButtons(false);
             AppendClientLog("Отключено от сервера.");
@@ -458,30 +423,29 @@ namespace NetworkApp
             }
 
             string selected = lstFiles.SelectedItem.ToString();
+            string fullPath = Path.Combine(_currentServerPath, selected);
 
-            // Убираем префикс [DIR], если есть.
-            string name = selected.StartsWith("[DIR] ") ? selected.Substring(6) : selected;
-            string fullPath = Path.Combine(_currentServerPath, name);
-            _lastRequestWasFile = !selected.StartsWith("[DIR] ");
-
-            try
+            if (IsDirectory(selected))
             {
-                SendMessage(_clientStream, fullPath);
-                // Ответ придёт в ReceiveLoop.
+                // Папка — используем RequestDirectoryListing, он обновит путь и адресную строку.
+                RequestDirectoryListing(fullPath);
             }
-            catch (Exception ex)
+            else
             {
-                MessageBox.Show("Ошибка отправки: " + ex.Message);
-                DisconnectClient();
+                // Файл — просто запрашиваем содержимое, путь не меняем.
+                _lastRequestWasFile = true;
+                try
+                {
+                    SendMessage(_clientStream, fullPath);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Ошибка отправки: " + ex.Message);
+                    DisconnectClient();
+                }
             }
         }
 
-        private void btnSendToClient_Click(object sender, EventArgs e)
-        {
-            AppendServerLog("Передача клиенту управляется автоматически (ответ на запрос).");
-        }
-
-        // Протокол обмена: длина (4 байта) + данные UTF-8.
         private void SendMessage(NetworkStream stream, string message)
         {
             byte[] data = Encoding.UTF8.GetBytes(message);
@@ -499,10 +463,7 @@ namespace NetworkApp
             while (bytesRead < 4)
             {
                 int n = stream.Read(lengthBuffer, bytesRead, 4 - bytesRead);
-                if (n == 0)
-                {
-                    return null;
-                }
+                if (n == 0) return null;
                 bytesRead += n;
             }
 
@@ -513,27 +474,17 @@ namespace NetworkApp
             while (bytesRead < messageLength)
             {
                 int n = stream.Read(dataBuffer, bytesRead, messageLength - bytesRead);
-                if (n == 0)
-                {
-                    return null;
-                }
+                if (n == 0) return null;
                 bytesRead += n;
             }
 
             return Encoding.UTF8.GetString(dataBuffer);
         }
 
-        // Закрытие формы.
         private void Form1_FormClosing(object sender, FormClosingEventArgs e)
         {
-            if (_clientConnected)
-            {
-                DisconnectClient();
-            }
-            if (_serverRunning)
-            {
-                StopServer();
-            }
+            if (_clientConnected) DisconnectClient();
+            if (_serverRunning) StopServer();
         }
 
         private void btnExit_Click(object sender, EventArgs e)
